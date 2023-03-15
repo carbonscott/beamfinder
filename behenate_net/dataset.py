@@ -13,7 +13,8 @@ logger = logging.getLogger(__name__)
 class BeHenateDataset(Dataset):
     def __init__(self, data_list, size_sample, trans_list         = None,
                                                normalizes_data    = False,
-                                               prints_cache_state = False):
+                                               prints_cache_state = False,
+                                               mpi_comm           = None,):
         super().__init__()
 
         self.data_list          = data_list
@@ -21,6 +22,13 @@ class BeHenateDataset(Dataset):
         self.trans_list         = trans_list
         self.normalizes_data    = normalizes_data
         self.prints_cache_state = prints_cache_state
+        self.mpi_comm           = mpi_comm
+
+        # Set up mpi...
+        if self.mpi_comm is not None:
+            self.mpi_size     = self.mpi_comm.Get_size()    # num of processors
+            self.mpi_rank     = self.mpi_comm.Get_rank()
+            self.mpi_data_tag = 11
 
         self.idx_sample_list    = self.build_dataset()
         self.dataset_cache_dict = {}
@@ -80,3 +88,66 @@ class BeHenateDataset(Dataset):
             self.dataset_cache_dict[idx] = (img, center, metadata)
 
         return None
+
+
+    def mpi_cache_dataset(self, mpi_batch_size = 1):
+        ''' Cache image in the seq_random_list unless a subset is specified
+            using MPI.
+        '''
+        # Import chunking method...
+        from .utils import split_list_into_chunk
+
+        # Get the MPI metadata...
+        mpi_comm     = self.mpi_comm
+        mpi_size     = self.mpi_size
+        mpi_rank     = self.mpi_rank
+        mpi_data_tag = self.mpi_data_tag
+
+        # If subset is not give, then go through the whole set...
+        global_idx_list = range(self.size_sample)
+
+        # Divide all indices into batches and go through them...
+        batch_idx_list = split_list_into_chunk(global_idx_list, max_num_chunk = mpi_batch_size)
+        for batch_seqi, idx_list in enumerate(batch_idx_list):
+            # Split the workload...
+            idx_list_in_chunk = split_list_into_chunk(idx_list, max_num_chunk = mpi_size)
+
+            # Process chunk by each worker...
+            # No need to sync the dataset_cache_dict across workers
+            dataset_cache_dict = {}
+            if mpi_rank != 0:
+                if mpi_rank < len(idx_list_in_chunk):
+                    idx_list_per_worker = idx_list_in_chunk[mpi_rank]
+                    dataset_cache_dict = self._mpi_cache_data_per_rank(idx_list_per_worker)
+
+                mpi_comm.send(dataset_cache_dict, dest = 0, tag = mpi_data_tag)
+
+            if mpi_rank == 0:
+                print(f'[[[ MPI batch {batch_seqi} ]]]')
+
+                idx_list_per_worker = idx_list_in_chunk[mpi_rank]
+                dataset_cache_dict = self._mpi_cache_data_per_rank(idx_list_per_worker)
+                self.dataset_cache_dict.update(dataset_cache_dict)
+
+                for i in range(1, mpi_size, 1):
+                    dataset_cache_dict = mpi_comm.recv(source = i, tag = mpi_data_tag)
+                    self.dataset_cache_dict.update(dataset_cache_dict)
+
+        return None
+
+
+    def _mpi_cache_data_per_rank(self, idx_list):
+        ''' Cache image in the seq_random_list unless a subset is specified
+            using MPI.
+        '''
+        dataset_cache_dict = {}
+        for idx in idx_list:
+            # Skip those have been recorded...
+            if idx in dataset_cache_dict: continue
+
+            print(f"Cacheing data point {idx}...")
+
+            img, center, metadata = self.get_data(idx)
+            dataset_cache_dict[idx] = (img, center, metadata)
+
+        return dataset_cache_dict
