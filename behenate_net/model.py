@@ -162,8 +162,9 @@ class BeHenataNet(nn.Module):
 
         batch_center_diff = batch_center_pred - batch_center
         batch_center_diff = torch.abs(batch_center_diff)    # L1
-        ## batch_center_diff *= batch_center_diff    # L2
-        loss = torch.mean(batch_center_diff, dim = 1)
+        loss = batch_center_diff.mean(dim = 1)              # L1
+        ## batch_center_diff *= batch_center_diff           # L2
+        ## loss = batch_center_diff.mean(dim = 1).sqrt()    # L2
 
         return loss.mean()
 
