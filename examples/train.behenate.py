@@ -32,12 +32,12 @@ from behenate_net.utils     import EpochManager, split_dataset, set_seed, init_l
 seed = 0
 set_seed(seed)
 
-batch_size = 20
+batch_size = 200
 lr = 3e-4
-frac_train = 0.6
-frac_validate = 0.4
+frac_train = 0.7
+frac_validate = 0.5
 
-size_sample = 10000
+size_sample = 200
 size_img_y, size_img_x = (200, 200)
 
 size_pad       = 2000
@@ -87,17 +87,17 @@ dataset_train = BeHenateDataset( data_list          = data_train,
                                  normalizes_data    = normalizes_data,
                                  prints_cache_state = False,
                                )
-dataset_train.cache_dataset()
+## dataset_train.cache_dataset()
 
 dataset_validate = BeHenateDataset( data_list       = data_validate,
-                                    size_sample     = size_sample // 2,
+                                    size_sample     = size_sample // 4,
                                     trans_list      = trans_list,
                                     normalizes_data = normalizes_data,
                                     prints_cache_state = False,
                                   )
-dataset_validate.cache_dataset()
+## dataset_validate.cache_dataset()
 
-device = torch.cuda.current_device() if torch.cuda.is_available() else 'cpu'
+## device = torch.cuda.current_device() if torch.cuda.is_available() else 'cpu'
 config_model = ConfigModel( size_y = size_img_y, size_x = size_img_x, isbias = True )
 model = BeHenataNet(config_model)
 model.init_params(fl_chkpt = fl_chkpt)
@@ -105,7 +105,7 @@ model.init_params(fl_chkpt = fl_chkpt)
 # [[[ TRAINER ]]]
 # Config the trainer...
 config_train = ConfigTrainer( timestamp    = timestamp,
-                              num_workers  = 1,
+                              num_workers  = 2,
                               batch_size   = batch_size,
                               pin_memory   = True,
                               shuffle      = False,
@@ -115,7 +115,7 @@ trainer = Trainer(model, dataset_train, config_train)
 
 # [[[ VALIDATOR ]]]
 # Config the validator...
-config_validator = ConfigValidator( num_workers  = 1,
+config_validator = ConfigValidator( num_workers  = 2,
                                     batch_size   = batch_size,
                                     pin_memory   = True,
                                     shuffle      = False,

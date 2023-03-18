@@ -38,8 +38,9 @@ mpi_rank = mpi_comm.Get_rank()
 seed = 0
 set_seed(seed)
 
-batch_size = 20
-lr = 3e-4
+batch_size = 200
+lr = 10**(-4.0)    # Check out the find-learning-rate plot in find_lr.behenate.ipynb
+                   # Data were obtained using find_lr.behenate.py
 frac_train = 0.7
 frac_validate = 0.5
 
@@ -49,10 +50,12 @@ size_img_y, size_img_x = (200, 200)
 size_pad       = 2000
 size_patch     = 20
 frac_shift_max = 0.4
-angle_max      = 20
+angle_max      = 359
 
-timestamp_prev = None # "2023_0314_0941_45"
-epoch = 311
+uses_frac_center = True
+
+timestamp_prev = "2023_0317_2047_44"
+epoch = 893
 fl_chkpt = None if timestamp_prev is None else f"{timestamp_prev}.epoch_{epoch}.chkpt"
 
 if mpi_rank == 0:
@@ -71,7 +74,7 @@ if mpi_rank == 0:
     metalog = MetaLog( comments = comments )
     metalog.report()
 
-path_pickle = "beam_center.pickle"
+path_pickle = "beam_center.v3.pickle"
 with open(path_pickle, 'rb') as handle:
     data_list = pickle.load(handle)
 
@@ -86,71 +89,74 @@ trans_list = (
     RandomRotate(angle_max = angle_max),
     RandomShift(frac_shift_max, frac_shift_max),
     RandomCenterCropZoom(trim_factor_max = 0.2),
-    RandomPatch(num_patch = 10, size_patch_y = size_patch, size_patch_x = size_patch, var_patch_y = 0.2, var_patch_x = 0.2),
+    RandomPatch(num_patch = 20, size_patch_y = size_patch, size_patch_x = size_patch, var_patch_y = 0.2, var_patch_x = 0.2),
 )
 dataset_train = BeHenateDataset( data_list          = data_train,
                                  size_sample        = size_sample,
                                  trans_list         = trans_list,
                                  normalizes_data    = normalizes_data,
                                  prints_cache_state = False,
+                                 uses_frac_center   = uses_frac_center,
                                  mpi_comm           = mpi_comm, )
-dataset_train.mpi_cache_dataset(mpi_batch_size = 1)
 
 dataset_validate = BeHenateDataset( data_list          = data_validate,
                                     size_sample        = size_sample // 4,
                                     trans_list         = trans_list,
                                     normalizes_data    = normalizes_data,
                                     prints_cache_state = False,
+                                    uses_frac_center   = uses_frac_center,
                                     mpi_comm           = mpi_comm, )
-dataset_validate.mpi_cache_dataset(mpi_batch_size = 1)
 
-if mpi_rank == 0: MPI.Finalize()    # Main will finish the MPI process
-else            : sys.exit()        # Other workers will stop working from here
+dataset_train.mpi_cache_dataset(mpi_batch_size = 20)
+dataset_validate.mpi_cache_dataset(mpi_batch_size = 20)
 
-device = torch.cuda.current_device() if torch.cuda.is_available() else 'cpu'
-config_model = ConfigModel( size_y = size_img_y, size_x = size_img_x, isbias = True )
-model = BeHenataNet(config_model)
-model.init_params(fl_chkpt = fl_chkpt)
+if mpi_rank == 0:
+    MPI.Finalize()    # Main will finalize the MPI process
 
-# [[[ TRAINER ]]]
-# Config the trainer...
-config_train = ConfigTrainer( timestamp    = timestamp,
-                              num_workers  = 1,
-                              batch_size   = batch_size,
-                              pin_memory   = True,
-                              shuffle      = False,
-                              lr           = lr,
-                              tqdm_disable = True)
-trainer = Trainer(model, dataset_train, config_train)
+    ## device = torch.cuda.current_device() if torch.cuda.is_available() else 'cpu'
+    config_model = ConfigModel( size_y = size_img_y, size_x = size_img_x, isbias = True )
+    model = BeHenataNet(config_model)
+    model.init_params(fl_chkpt = fl_chkpt)
 
-# [[[ VALIDATOR ]]]
-# Config the validator...
-config_validator = ConfigValidator( num_workers  = 1,
-                                    batch_size   = batch_size,
-                                    pin_memory   = True,
-                                    shuffle      = False,
-                                    lr           = lr,
-                                    tqdm_disable = True)
-validator = Validator(model, dataset_validate, config_validator)
+    # [[[ TRAINER ]]]
+    # Config the trainer...
+    config_train = ConfigTrainer( timestamp    = timestamp,
+                                  num_workers  = 1,
+                                  batch_size   = batch_size,
+                                  pin_memory   = True,
+                                  shuffle      = False,
+                                  lr           = lr,
+                                  tqdm_disable = True)
+    trainer = Trainer(model, dataset_train, config_train)
 
-# [[[ TRAIN EPOCHS ]]]
-loss_train_hist    = []
-loss_validate_hist = []
-loss_min_hist      = []
+    # [[[ VALIDATOR ]]]
+    # Config the validator...
+    config_validator = ConfigValidator( num_workers  = 1,
+                                        batch_size   = batch_size,
+                                        pin_memory   = True,
+                                        shuffle      = False,
+                                        lr           = lr,
+                                        tqdm_disable = True)
+    validator = Validator(model, dataset_validate, config_validator)
 
-# [[[ EPOCH MANAGER ]]]
-epoch_manager = EpochManager( trainer   = trainer,
-                              validator = validator, )
-max_epochs = 2000
-freq_save = 5
-for epoch in tqdm.tqdm(range(max_epochs), disable=False):
-    loss_train, loss_validate, loss_min = epoch_manager.run_one_epoch(epoch = epoch, returns_loss = True)
+    # [[[ TRAIN EPOCHS ]]]
+    loss_train_hist    = []
+    loss_validate_hist = []
+    loss_min_hist      = []
 
-    loss_train_hist.append(loss_train)
-    loss_validate_hist.append(loss_validate)
-    loss_min_hist.append(loss_min)
+    # [[[ EPOCH MANAGER ]]]
+    epoch_manager = EpochManager( trainer   = trainer,
+                                  validator = validator, )
+    max_epochs = 2000
+    freq_save = 5
+    for epoch in tqdm.tqdm(range(max_epochs), disable=False):
+        loss_train, loss_validate, loss_min = epoch_manager.run_one_epoch(epoch = epoch, returns_loss = True)
 
-    # if epoch % freq_save == 0: 
-    #     epoch_manager.save_model_parameters()
-    #     epoch_manager.save_model_gradients()
-    #     epoch_manager.save_state_dict()
+        loss_train_hist.append(loss_train)
+        loss_validate_hist.append(loss_validate)
+        loss_min_hist.append(loss_min)
+
+        # if epoch % freq_save == 0: 
+        #     epoch_manager.save_model_parameters()
+        #     epoch_manager.save_model_gradients()
+        #     epoch_manager.save_state_dict()
