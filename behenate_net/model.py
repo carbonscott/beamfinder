@@ -123,6 +123,11 @@ class BeHenataNet(nn.Module):
                        bias         = bias),
         )
 
+        self.sigmoid = nn.Sigmoid()
+
+        # Define loss criterio...
+        self.criterion = None
+
 
     def init_params(self, fl_chkpt = None):
         # Initialize weights or reuse weights from a timestamp...
@@ -154,17 +159,23 @@ class BeHenataNet(nn.Module):
         ## batch_img += self.residual_linear(batch_img_copy.view(len(batch_img),-1))
         batch_center_pred = self.fc(batch_img)
 
-        return batch_center_pred
+        # Convert it to fractional...
+        batch_center_frac_pred = self.sigmoid(batch_center_pred)
+
+        return batch_center_frac_pred
+
+
+    def configure_loss(self):
+        ## self.criterion = nn.L1Loss()
+        self.criterion = nn.MSELoss()
 
 
     def forward(self, batch_img, batch_center):
         batch_center_pred = self.predict(batch_img)
 
-        batch_center_diff = batch_center_pred - batch_center
-        batch_center_diff = torch.abs(batch_center_diff)    # L1
-        loss = batch_center_diff.mean(dim = 1)              # L1
-        ## batch_center_diff *= batch_center_diff           # L2
-        ## loss = batch_center_diff.mean(dim = 1).sqrt()    # L2
+        if self.criterion is None: self.configure_loss()
+
+        loss = self.criterion(batch_center_pred, batch_center)
 
         return loss.mean()
 
