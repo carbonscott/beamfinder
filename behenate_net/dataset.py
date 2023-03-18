@@ -14,6 +14,7 @@ class BeHenateDataset(Dataset):
     def __init__(self, data_list, size_sample, trans_list         = None,
                                                normalizes_data    = False,
                                                prints_cache_state = False,
+                                               uses_frac_center   = False,
                                                mpi_comm           = None,):
         super().__init__()
 
@@ -22,6 +23,7 @@ class BeHenateDataset(Dataset):
         self.trans_list         = trans_list
         self.normalizes_data    = normalizes_data
         self.prints_cache_state = prints_cache_state
+        self.uses_frac_center   = uses_frac_center
         self.mpi_comm           = mpi_comm
 
         # Set up mpi...
@@ -51,8 +53,9 @@ class BeHenateDataset(Dataset):
 
 
     def get_data(self, idx):
-        normalizes_data = self.normalizes_data
-        trans_list      = self.trans_list
+        normalizes_data  = self.normalizes_data
+        trans_list       = self.trans_list
+        uses_frac_center = self.uses_frac_center
 
         idx_sample = self.idx_sample_list[idx]
 
@@ -64,6 +67,14 @@ class BeHenateDataset(Dataset):
 
         if normalizes_data:
             img = (img - img.mean()) / img.std()
+
+        if uses_frac_center:
+            size_y, size_x = img.shape[-2:]
+            cy, cx = center
+            cy_frac = cy / size_y
+            cx_frac = cx / size_x
+
+            center = (cy_frac, cx_frac)
 
         return img, center, metadata
 
@@ -80,6 +91,8 @@ class BeHenateDataset(Dataset):
         if not len(idx_list): idx_list = range(self.size_sample)
         for idx in idx_list:
             if idx in self.dataset_cache_dict: continue
+
+            print(f"Cacheing data point {idx}...", flush = True)
 
             if self.prints_cache_state:
                 print(f"Cacheing data point {idx}...")
@@ -123,7 +136,7 @@ class BeHenateDataset(Dataset):
                 mpi_comm.send(dataset_cache_dict, dest = 0, tag = mpi_data_tag)
 
             if mpi_rank == 0:
-                print(f'[[[ MPI batch {batch_seqi} ]]]')
+                print(f'[[[ MPI batch {batch_seqi} ]]]', flush = True)
 
                 idx_list_per_worker = idx_list_in_chunk[mpi_rank]
                 dataset_cache_dict = self._mpi_cache_data_per_rank(idx_list_per_worker)
@@ -145,7 +158,7 @@ class BeHenateDataset(Dataset):
             # Skip those have been recorded...
             if idx in dataset_cache_dict: continue
 
-            print(f"Cacheing data point {idx}...")
+            print(f"Cacheing data point {idx}...", flush = True)
 
             img, center, metadata = self.get_data(idx)
             dataset_cache_dict[idx] = (img, center, metadata)
